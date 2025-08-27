@@ -1,82 +1,69 @@
 import express from "express";
+import bodyParser from "body-parser";
+import multer from "multer";
 import fs from "fs";
 import { google } from "googleapis";
-import multer from "multer";
 
 const app = express();
-const port = process.env.PORT || 10000;
+app.use(bodyParser.json());
 
-// ===== Multer lưu file tạm để upload =====
+// ================== GOOGLE DRIVE AUTH ==================
+const auth = new google.auth.GoogleAuth({
+  keyFile: "credentials.json", // 👈 file JSON tài khoản dịch vụ tải từ Google Cloud
+  scopes: ["https://www.googleapis.com/auth/drive.file"],
+});
+
+const drive = google.drive({ version: "v3", auth });
+
+// ================== MULTER (UPLOAD TẠM) ==================
 const upload = multer({ dest: "uploads/" });
 
-// ===== Config Google Drive API =====
-const KEYFILEPATH = "service-account.json"; // file JSON tải từ Google Cloud
-const SCOPES = ["https://www.googleapis.com/auth/drive.file"];
-
-// Auth client
-const auth = new google.auth.GoogleAuth({
-  keyFile: KEYFILEPATH,
-  scopes: SCOPES,
-});
-const driveService = google.drive({ version: "v3", auth });
-
-// ===== ID thư mục Drive (copy từ link thư mục của bạn) =====
-const DRIVE_FOLDER_ID = "1tYf2dFXO_VHlxzcYwB_Wd5fdOIAUIlYq";
-
-// ===== Upload file lên Google Drive =====
-async function uploadFileToDrive(filePath, fileName) {
-  const fileMetadata = {
-    name: fileName,
-    parents: [DRIVE_FOLDER_ID],
-  };
-
-  const media = {
-    mimeType: "video/mp4",
-    body: fs.createReadStream(filePath),
-  };
-
-  const file = await driveService.files.create({
-    resource: fileMetadata,
-    media: media,
-    fields: "id, webContentLink, webViewLink",
-  });
-
-  // Set quyền công khai cho file
-  await driveService.permissions.create({
-    fileId: file.data.id,
-    requestBody: {
-      role: "reader",
-      type: "anyone",
-    },
-  });
-
-  // Trả link download trực tiếp
-  return `https://drive.google.com/uc?export=download&id=${file.data.id}`;
-}
-
-// ===== API Upload =====
-app.post("/upload", upload.single("video"), async (req, res) => {
+// ================== API UPLOAD ==================
+app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const filePath = req.file.path;
-    const fileName = req.file.originalname;
+    const fileMetadata = {
+      name: req.file.originalname,
+    };
 
-    const downloadLink = await uploadFileToDrive(filePath, fileName);
+    const media = {
+      mimeType: req.file.mimetype,
+      body: fs.createReadStream(req.file.path),
+    };
 
-    // Xoá file local sau khi upload xong
-    fs.unlinkSync(filePath);
+    // Upload file lên Google Drive
+    const file = await drive.files.create({
+      resource: fileMetadata,
+      media: media,
+      fields: "id",
+    });
 
-    res.json({ success: true, downloadLink });
+    // Xóa file tạm trên server
+    fs.unlinkSync(req.file.path);
+
+    const fileId = file.data.id;
+
+    // Làm file public để lấy link download
+    await drive.permissions.create({
+      fileId: fileId,
+      requestBody: {
+        role: "reader",
+        type: "anyone",
+      },
+    });
+
+    const link = `https://drive.google.com/uc?id=${fileId}&export=download`;
+
+    res.json({
+      success: true,
+      fileId: fileId,
+      downloadUrl: link,
+    });
   } catch (err) {
-    console.error("Upload lỗi:", err);
+    console.error("Upload error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// ===== Test API =====
-app.get("/", (req, res) => {
-  res.send("🚀 FFmpeg API + Google Drive Upload đang chạy!");
-});
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+// ================== START SERVER ==================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
