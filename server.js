@@ -1,101 +1,82 @@
-const express = require("express");
-const bodyParser = require("body-parser");
-const cors = require("cors");
-const ffmpeg = require("fluent-ffmpeg");
-const ffmpegInstaller = require("@ffmpeg-installer/ffmpeg");
-const path = require("path");
-const fs = require("fs");
-const { exec } = require("child_process");
-const https = require("https");
-
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+import express from "express";
+import fs from "fs";
+import { google } from "googleapis";
+import multer from "multer";
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const port = process.env.PORT || 10000;
 
-app.use(cors());
-app.use(bodyParser.json());
+// ===== Multer lưu file tạm để upload =====
+const upload = multer({ dest: "uploads/" });
 
-// 📌 Hàm tải file từ URL về local
-function downloadFile(url, dest) {
-  return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(dest);
-    https.get(url, (response) => {
-      if (response.statusCode !== 200) {
-        reject(new Error("Download failed: " + response.statusCode));
-        return;
-      }
-      response.pipe(file);
-      file.on("finish", () => file.close(() => resolve(dest)));
-    }).on("error", (err) => {
-      fs.unlink(dest, () => reject(err));
-    });
+// ===== Config Google Drive API =====
+const KEYFILEPATH = "service-account.json"; // file JSON tải từ Google Cloud
+const SCOPES = ["https://www.googleapis.com/auth/drive.file"];
+
+// Auth client
+const auth = new google.auth.GoogleAuth({
+  keyFile: KEYFILEPATH,
+  scopes: SCOPES,
+});
+const driveService = google.drive({ version: "v3", auth });
+
+// ===== ID thư mục Drive (copy từ link thư mục của bạn) =====
+const DRIVE_FOLDER_ID = "YOUR_FOLDER_ID_HERE";
+
+// ===== Upload file lên Google Drive =====
+async function uploadFileToDrive(filePath, fileName) {
+  const fileMetadata = {
+    name: fileName,
+    parents: [DRIVE_FOLDER_ID],
+  };
+
+  const media = {
+    mimeType: "video/mp4",
+    body: fs.createReadStream(filePath),
+  };
+
+  const file = await driveService.files.create({
+    resource: fileMetadata,
+    media: media,
+    fields: "id, webContentLink, webViewLink",
   });
+
+  // Set quyền công khai cho file
+  await driveService.permissions.create({
+    fileId: file.data.id,
+    requestBody: {
+      role: "reader",
+      type: "anyone",
+    },
+  });
+
+  // Trả link download trực tiếp
+  return `https://drive.google.com/uc?export=download&id=${file.data.id}`;
 }
 
-// API check
-app.get("/", (req, res) => {
-  res.json({ status: "ok", message: "FFmpeg API running 🚀" });
-});
-
-// API merge
-app.post("/merge", async (req, res) => {
+// ===== API Upload =====
+app.post("/upload", upload.single("video"), async (req, res) => {
   try {
-    const { video1, video2, audio } = req.body;
-    if (!video1 || !video2 || !audio) {
-      return res.status(400).json({ error: "Thiếu video1, video2 hoặc audio" });
-    }
+    const filePath = req.file.path;
+    const fileName = req.file.originalname;
 
-    // 📂 Tạo folder /tmp
-    const outDir = "/tmp";
-    if (!fs.existsSync(outDir)) fs.mkdirSync(outDir);
+    const downloadLink = await uploadFileToDrive(filePath, fileName);
 
-    // 📥 Download file
-    const v1Path = path.join(outDir, "video1.mp4");
-    const v2Path = path.join(outDir, "video2.mp4");
-    const aPath = path.join(outDir, "audio.mp3");
-    const outputPath = path.join(outDir, `output_${Date.now()}.mp4`);
+    // Xoá file local sau khi upload xong
+    fs.unlinkSync(filePath);
 
-    await downloadFile(video1, v1Path);
-    await downloadFile(video2, v2Path);
-    await downloadFile(audio, aPath);
-
-    // 🛠 Merge video1 + video2 + audio
-    await new Promise((resolve, reject) => {
-      ffmpeg()
-        .input(v1Path)
-        .input(v2Path)
-        .input(aPath)
-        .complexFilter([
-          "[0:v][1:v]concat=n=2:v=1:a=0[v]", // nối 2 video
-          "[2:a]anull[a]" // lấy audio
-        ])
-        .map("[v]")
-        .map("[a]")
-        .outputOptions(["-c:v libx264", "-crf 23", "-preset veryfast"])
-        .save(outputPath)
-        .on("end", () => resolve(outputPath))
-        .on("error", (err) => reject(err));
-    });
-
-    // 📤 Trả về link công khai
-    const fileName = path.basename(outputPath);
-    const publicUrl = `https://my-web-service-c380.onrender.com/output/${fileName}`;
-
-    res.json({
-      success: true,
-      result_url: publicUrl
-    });
-
+    res.json({ success: true, downloadLink });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Lỗi khi merge video", detail: err.message });
+    console.error("Upload lỗi:", err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 📂 Tạo route để serve file output
-app.use("/output", express.static("/tmp"));
+// ===== Test API =====
+app.get("/", (req, res) => {
+  res.send("🚀 FFmpeg API + Google Drive Upload đang chạy!");
+});
 
-app.listen(PORT, () => {
-  console.log(`FFmpeg API running on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
