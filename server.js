@@ -2,6 +2,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import multer from "multer";
 import fs from "fs";
+import path from "path";
 import { google } from "googleapis";
 
 const app = express();
@@ -9,14 +10,18 @@ app.use(bodyParser.json());
 
 // ================== GOOGLE DRIVE AUTH ==================
 const auth = new google.auth.GoogleAuth({
-  keyFile: "/etc/secrets/credentials.json", // 👈 file JSON tài khoản dịch vụ tải từ Google Cloud
+  keyFile: "credentials.json", // 👈 lấy từ repo (không cần Disk)
   scopes: ["https://www.googleapis.com/auth/drive.file"],
 });
 
 const drive = google.drive({ version: "v3", auth });
 
 // ================== MULTER (UPLOAD TẠM) ==================
-const upload = multer({ dest: "uploads/" });
+const uploadDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+const upload = multer({ dest: uploadDir });
 
 // ================== API UPLOAD ==================
 app.post("/upload", upload.single("file"), async (req, res) => {
