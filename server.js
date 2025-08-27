@@ -9,7 +9,7 @@ app.use(bodyParser.json());
 
 // ================== GOOGLE DRIVE AUTH ==================
 const auth = new google.auth.GoogleAuth({
-  keyFile: "credentials.json", // 👈 file JSON tài khoản dịch vụ tải từ Google Cloud
+  keyFile: "/etc/secrets/credentials.json", // 👈 file JSON tài khoản dịch vụ tải từ Google Cloud
   scopes: ["https://www.googleapis.com/auth/drive.file"],
 });
 
