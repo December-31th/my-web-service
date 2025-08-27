@@ -21,7 +21,7 @@ const auth = new google.auth.GoogleAuth({
 const driveService = google.drive({ version: "v3", auth });
 
 // ===== ID thư mục Drive (copy từ link thư mục của bạn) =====
-const DRIVE_FOLDER_ID = "YOUR_FOLDER_ID_HERE";
+const DRIVE_FOLDER_ID = "1tYf2dFXO_VHlxzcYwB_Wd5fdOIAUIlYq";
 
 // ===== Upload file lên Google Drive =====
 async function uploadFileToDrive(filePath, fileName) {
